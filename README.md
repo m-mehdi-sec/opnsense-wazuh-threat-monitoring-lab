@@ -452,91 +452,83 @@ OPNsense → Syslog UDP 514 → Wazuh Server → archives.log
 
 ## Screenshots
 
-### 1. Hyper-V Lab Environment
+### 1. OPNsense Interface Overview
 
-![Hyper-V Lab Environment](images/01-hyperv-lab-environment.png)
+![OPNsense Interface Overview](images/01-opnsense-interface-overview.png)
 
-Virtual machines used in the lab, including OPNsense, Wazuh Server, HR Client, and Support Client.
-
----
-
-### 2. OPNsense Interface Configuration
-
-![OPNsense Interface Configuration](images/02-opnsense-interface-configuration.png)
-
-OPNsense interface configuration showing LAN and Support_LAN network segments.
+OPNsense interface overview showing the LAN, WLAN, WAN, and Support_LAN interfaces. The main LAN uses `192.168.10.1/24`, and the Support_LAN segment uses `192.168.30.1/24`.
 
 ---
 
-### 3. Wazuh Server Static IP
+### 2. Wazuh Server Static IP
 
-![Wazuh Server Static IP](images/03-wazuh-server-static-ip.png)
+![Wazuh Server Static IP](images/02-wazuh-server-static-ip.png)
 
-Ubuntu Server configured with static IP address 192.168.10.150/24.
-
----
-
-### 4. Wazuh Dashboard Overview
-
-![Wazuh Dashboard Overview](images/04-wazuh-dashboard-overview.png)
-
-Wazuh dashboard showing the active monitoring environment.
+Ubuntu Server network configuration showing the Wazuh server using the static IP address `192.168.10.150/24` on the LAN network.
 
 ---
 
-### 5. Wazuh Agent Summary
+### 3. Wazuh Dashboard Overview
 
-![Wazuh Agent Summary](images/05-wazuh-agent-summary.png)
+![Wazuh Dashboard Overview](images/03-wazuh-dashboard-overview.png)
 
-Wazuh agents showing HR and Support clients as active.
-
----
-
-### 6. HR Failed Login Events
-
-![HR Failed Login Events](images/06-hr-failed-login-events.png)
-
-Failed login events from HR_Anstalld, showing logon failure detection.
+Wazuh dashboard overview showing active agents and alert statistics, confirming that the Wazuh web interface is working.
 
 ---
 
-### 7. Support Login Success Events
+### 4. Wazuh Agent Summary
 
-![Support Login Success Events](images/07-support-login-success-events.png)
+![Wazuh Agent Summary](images/04-wazuh-agent-summary.png)
 
-Successful logon events from Support_Anstalld.
-
----
-
-### 8. OPNsense Syslog Target
-
-![OPNsense Syslog Target](images/08-opnsense-syslog-target.png)
-
-OPNsense remote syslog configuration forwarding logs to Wazuh.
+Wazuh endpoint summary showing both Windows agents, `HR_Anstalld` and `Support_Anstalld`, connected and active.
 
 ---
 
-### 9. Wazuh Manager Status
+### 5. HR Failed Login Events
 
-![Wazuh Manager Status](images/09-wazuh-manager-status.png)
+![HR Failed Login Events](images/05-hr-failed-login-events.png)
 
-Wazuh Manager service running successfully after configuration changes.
-
----
-
-### 10. tcpdump Syslog Verification
-
-![tcpdump Syslog Verification](images/10-tcpdump-syslog-verification.png)
-
-tcpdump showing incoming UDP 514 syslog traffic from OPNsense.
+Threat Hunting view showing multiple failed login events from `HR_Anstalld`, detected as `Logon Failure - Unknown user or bad password` with rule ID `60122`.
 
 ---
 
-### 11. archives.log Verification
+### 6. Support Login Success Events
 
-![archives.log Verification](images/11-archives-log-verification.png)
+![Support Login Success Events](images/06-support-login-success-events.png)
 
-Raw OPNsense firewall logs visible in Wazuh archives.log.
+Threat Hunting view showing successful Windows logon events from `Support_Anstalld`, detected with rule ID `60106`.
+
+---
+
+### 7. OPNsense Syslog Target
+
+![OPNsense Syslog Target](images/07-opnsense-syslog-target.png)
+
+OPNsense remote logging configuration showing syslog forwarding to the Wazuh server at `192.168.10.150` over UDP.
+
+---
+
+### 8. Wazuh Manager Status
+
+![Wazuh Manager Status](images/08-wazuh-syslog-status.png)
+
+Wazuh Manager service status showing `active (running)`, confirming that Wazuh accepted the configuration and is running correctly.
+
+---
+
+### 9. tcpdump Syslog Verification
+
+![tcpdump Syslog Verification](images/09-tcpdump-syslog-verification.png)
+
+tcpdump output showing incoming UDP 514 syslog traffic from OPNsense to the Wazuh server, confirming that syslog packets reach the server.
+
+---
+
+### 10. archives.log Verification
+
+![archives.log Verification](images/10-archives-log-verfication.png)
+
+Wazuh `archives.log` output showing raw OPNsense firewall logs, confirming that syslog data is received and written by Wazuh.
 
 ---
 
