@@ -4,7 +4,7 @@
 
 The objective of this lab was to install, configure, and validate Wazuh as a SIEM and endpoint monitoring platform in a controlled Hyper-V lab environment.
 
-The lab focused on practical Blue Team work: deploying a Wazuh server, connecting Windows endpoints, forwarding OPNsense firewall logs through syslog, simulating authentication-related threats, and troubleshooting log ingestion until the full log path could be verified.
+The lab focused on practical Blue Team work: deploying a Wazuh server, connecting Windows endpoints, forwarding OPNsense firewall logs through syslog, simulating authentication-related threats, validating process execution through Sysmon, testing File Integrity Monitoring, and troubleshooting log ingestion until the full log path could be verified.
 
 All testing was performed inside an isolated local lab environment.
 
@@ -34,6 +34,8 @@ The original assignment used a slightly different IP plan, but the environment w
 | Wazuh_Server | Wazuh Manager / Dashboard | 192.168.10.150 | LAN |
 | HR_Client | Windows HR endpoint | 192.168.10.101 | LAN |
 | Support_Client | Windows Support endpoint | 192.168.30.101 | Support_LAN |
+
+> Note: Some Wazuh alerts show the HR agent name as `HR_Ansatlld` due to a lab naming typo. This refers to the HR client agent.
 
 ---
 
@@ -440,6 +442,218 @@ The test generated traffic, but default Wazuh rules did not classify it as a DDo
 
 ---
 
+## Extended Endpoint Detection Validation
+
+After the initial Wazuh lab was completed, additional validation was performed to test whether Wazuh could detect more detailed endpoint activity.
+
+The focus was on:
+
+- Process execution visibility
+- Sysmon-based detections
+- Command execution from Windows
+- File Integrity Monitoring
+- Custom folder monitoring through syscheck
+- Troubleshooting why some events were not visible at first
+
+This extended validation made the lab more realistic from a SOC and Blue Team perspective because endpoint detection often requires tuning, additional telemetry, and verification.
+
+---
+
+## Wazuh Agent Troubleshooting on HR Client
+
+During the extended validation, some expected Windows events were not visible in Wazuh.
+
+The Wazuh agent service was checked on the HR client:
+
+    Get-Service wazuhsvc
+
+Initial result:
+
+    Stopped
+
+The service was started again:
+
+    Start-Service wazuhsvc
+
+The Wazuh agent log was reviewed with:
+
+    Get-Content "C:\Program Files (x86)\ossec-agent\ossec.log" -Tail 50
+
+Important log entries showed that the agent connected successfully to the Wazuh server:
+
+    Connected to the server ([192.168.10.150]:1514/tcp)
+    Agent is now online
+
+Observation:
+
+The missing events were partly caused by the Wazuh agent being stopped. After starting the service, new endpoint events were sent to Wazuh again.
+
+---
+
+## Sysmon Process Execution Validation
+
+The next step was to verify whether command execution could be detected in Wazuh.
+
+The following commands were executed on the HR client through `cmd.exe`:
+
+    cmd.exe /c whoami
+    cmd.exe /c ipconfig
+
+These commands were used because executing them through `cmd.exe` generated clearer Sysmon process creation events in Wazuh.
+
+---
+
+## ipconfig Detection in Wazuh
+
+Wazuh detected the `ipconfig` command as a Sysmon process creation event.
+
+Observed fields:
+
+| Field | Value |
+|---|---|
+| Agent | HR_Anstalld |
+| Event source | Microsoft-Windows-Sysmon/Operational |
+| Sysmon Event ID | 1 |
+| Image | C:\Windows\System32\ipconfig.exe |
+| Command line | ipconfig |
+| Parent image | C:\Windows\System32\cmd.exe |
+| Parent command line | C:\WINDOWS\system32\cmd.exe /c ipconfig |
+| Rule description | Suspicious Windows cmd shell execution |
+| Rule ID | 92032 |
+| Rule level | 3 |
+| MITRE tactic | Discovery, Execution |
+| MITRE technique | Account Discovery, Windows Command Shell |
+| MITRE ID | T1087, T1059.003 |
+
+Observation:
+
+Wazuh successfully detected `ipconfig.exe` execution through Sysmon. This demonstrated process-level visibility beyond basic Windows login events.
+
+---
+
+## whoami Detection in Wazuh
+
+Wazuh also detected the `whoami` command as a Sysmon process creation event.
+
+Observed fields:
+
+| Field | Value |
+|---|---|
+| Agent | HR_Anstalld |
+| Event source | Microsoft-Windows-Sysmon/Operational |
+| Sysmon Event ID | 1 |
+| Image | C:\Windows\System32\whoami.exe |
+| Command line | whoami |
+| Parent image | C:\Windows\System32\cmd.exe |
+| Parent command line | C:\WINDOWS\system32\cmd.exe /c whoami |
+| Rule description | Suspicious Windows cmd shell execution |
+| Rule ID | 92032 |
+| Rule level | 3 |
+| MITRE tactic | Discovery, Execution |
+| MITRE technique | Account Discovery, Windows Command Shell |
+| MITRE ID | T1087, T1059.003 |
+
+Observation:
+
+Wazuh successfully detected `whoami.exe` execution through Sysmon. This is useful from a threat hunting perspective because commands like `whoami` are commonly used during discovery after initial access.
+
+---
+
+## File Integrity Monitoring Test Preparation
+
+A custom test folder and file were created on the HR client.
+
+Commands used:
+
+    New-Item -ItemType Directory -Path C:\WazuhLab -Force
+    Set-Content -Path C:\WazuhLab\test.txt -Value "test från Wazuh lab"
+    Add-Content -Path C:\WazuhLab\test.txt -Value "ny ändring"
+
+The file was verified with:
+
+    Test-Path C:\WazuhLab
+    Test-Path C:\WazuhLab\test.txt
+    dir C:\WazuhLab
+    Get-Content C:\WazuhLab\test.txt
+
+Observed result:
+
+    True
+    True
+
+The folder and file existed on the HR client.
+
+Observation:
+
+Creating the file was not enough by itself. Wazuh did not detect the custom folder until it was added to the File Integrity Monitoring configuration.
+
+---
+
+## File Integrity Monitoring Configuration
+
+The Wazuh agent configuration file was opened on the HR client:
+
+    C:\Program Files (x86)\ossec-agent\ossec.conf
+
+The following line was added inside the `<syscheck>` block:
+
+    <directories check_all="yes" realtime="yes" report_changes="yes">C:\WazuhLab</directories>
+
+The Wazuh agent was restarted:
+
+    Stop-Service wazuhsvc -Force
+    Start-Service wazuhsvc
+
+The agent log was checked:
+
+    Get-Content "C:\Program Files (x86)\ossec-agent\ossec.log" -Tail 100 | Select-String "WazuhLab"
+
+Observed result:
+
+    Monitoring path: 'c:\wazuhlab', with options 'size | permissions | owner | group | mtime | inode | hash_md5 | hash_sha1 | hash_sha256 | attributes | report_changes | realtime'
+
+Observation:
+
+This confirmed that Wazuh File Integrity Monitoring was actively monitoring `C:\WazuhLab`.
+
+---
+
+## File Integrity Monitoring Alert
+
+After the folder was added to syscheck, the test file was modified again.
+
+Command used:
+
+    Add-Content C:\WazuhLab\test.txt "FIM test efter att WazuhLab övervakas"
+
+Wazuh generated a File Integrity Monitoring alert.
+
+Observed fields:
+
+| Field | Value |
+|---|---|
+| Agent | HR_Anstalld |
+| Location | syscheck |
+| Decoder | syscheck_integrity_changed |
+| File path | c:\wazuhlab\test.txt |
+| Syscheck event | modified |
+| Mode | realtime |
+| Rule description | Integrity checksum changed |
+| Rule ID | 550 |
+| Rule level | 7 |
+| Changed attributes | size, mtime, md5, sha1, sha256 |
+| MITRE tactic | Impact |
+| MITRE technique | Stored Data Manipulation |
+| MITRE ID | T1565.001 |
+
+The alert showed that the file changed from size `33` to `72`, and that the MD5, SHA1, and SHA256 hashes changed.
+
+Observation:
+
+Wazuh successfully detected that `test.txt` was modified. This confirmed that File Integrity Monitoring worked after the custom folder was added to syscheck.
+
+---
+
 ## OPNsense Syslog Configuration
 
 OPNsense was configured to forward logs to Wazuh.
@@ -503,7 +717,7 @@ The final syslog receiver configuration was accepted and Wazuh Manager started s
 
 ## Troubleshooting – Wazuh Syslog Integration
 
-This was the most important troubleshooting part of the lab.
+This was one of the most important troubleshooting parts of the lab.
 
 The issue was that OPNsense was configured to send syslog traffic, but the logs were not immediately visible in Wazuh.
 
@@ -707,6 +921,11 @@ This was an important learning point. A SIEM does not automatically detect every
 | Failed login detection | Working |
 | Successful login monitoring | Working |
 | Suspicious login simulation | Login event detected |
+| Sysmon process monitoring | Working |
+| whoami detection | Working through Sysmon Event ID 1 |
+| ipconfig detection | Working through Sysmon Event ID 1 |
+| File Integrity Monitoring | Working after adding C:\WazuhLab to syscheck |
+| test.txt modification detection | Working, rule ID 550 |
 | OPNsense syslog forwarding | Working |
 | tcpdump verification | Working |
 | archives.log verification | Working |
@@ -770,6 +989,43 @@ This showed that DDoS-style detection usually needs better telemetry, tuned rule
 
 ---
 
+### Finding 6 – Sysmon Improved Endpoint Process Visibility
+
+Wazuh detected command execution from the HR client through Sysmon Event ID 1.
+
+Detected commands included:
+
+- whoami.exe
+- ipconfig.exe
+
+Both were executed through `cmd.exe` and detected in Wazuh with rule ID `92032`.
+
+This improved the endpoint visibility compared to relying only on basic Windows authentication events.
+
+---
+
+### Finding 7 – File Integrity Monitoring Worked After Tuning
+
+The custom folder `C:\WazuhLab` was not detected automatically at first.
+
+After adding it to the Wazuh agent syscheck configuration, Wazuh detected modifications to:
+
+    c:\wazuhlab\test.txt
+
+The alert was generated with:
+
+| Field | Value |
+|---|---|
+| Rule description | Integrity checksum changed |
+| Rule ID | 550 |
+| Rule level | 7 |
+| Syscheck event | modified |
+| Mode | realtime |
+
+This confirmed that File Integrity Monitoring worked after the correct folder was added to the monitoring configuration.
+
+---
+
 ## Lessons Learned
 
 This lab showed that deploying a SIEM is not only about installing a tool. It also requires validation and troubleshooting.
@@ -787,6 +1043,10 @@ Main lessons:
 - logall and logall_json affect raw log visibility
 - Default rules do not always generate the expected alert
 - Custom rules and tuning are important in real SOC work
+- Sysmon provides better process creation visibility than basic Windows logs alone
+- Commands such as whoami and ipconfig are useful for threat hunting validation
+- File Integrity Monitoring requires the correct monitored path
+- A stopped agent can make events disappear from the SIEM even when they exist locally
 - Troubleshooting is a central part of Blue Team methodology
 
 ---
@@ -800,10 +1060,14 @@ A vulnerability scanner can identify weaknesses at a specific point in time, whi
 - Failed login attempts
 - Successful logins
 - Endpoint events
+- Process execution
+- File modification
 - Firewall logs
 - Suspicious behavior patterns
 
 This makes Wazuh useful for detecting activity that vulnerability scanning alone cannot identify.
+
+The extended validation also showed an important SOC lesson: if an event is not visible in the SIEM, the issue may be caused by agent status, missing telemetry, missing configuration, or search/filter limitations. A security analyst must be able to troubleshoot the full chain from endpoint event generation to SIEM alert visibility.
 
 ---
 
@@ -813,7 +1077,7 @@ The lab also supported Zero Trust and segmentation concepts.
 
 The HR and Support clients were placed in separate networks. Wazuh provided visibility into endpoint behavior across these segments.
 
-In a production environment, Wazuh could support Zero Trust by monitoring authentication events, detecting abnormal login behavior, correlating firewall and endpoint logs, and supporting investigations when access patterns look suspicious.
+In a production environment, Wazuh could support Zero Trust by monitoring authentication events, detecting abnormal login behavior, correlating firewall and endpoint logs, monitoring endpoint process execution, detecting file changes on sensitive systems, and supporting investigations when access patterns look suspicious.
 
 ---
 
@@ -824,21 +1088,28 @@ Future improvements:
 - Create custom Wazuh rules for ICMP flood detection
 - Add Suricata IDS/IPS logs from OPNsense
 - Forward more detailed firewall logs
-- Add Sysmon to Windows clients
+- Expand Sysmon configuration for broader endpoint telemetry
 - Create dashboards for authentication monitoring
+- Create dashboards for Sysmon process execution events
+- Create dashboards for File Integrity Monitoring events
 - Test Microsoft 365 or cloud identity logs
 - Use NetFlow or traffic analysis for better DDoS visibility
 - Create active response rules in Wazuh
 - Add email or notification alerts
+- Test command execution detection using PowerShell logging
+- Add more monitored folders for FIM validation
+- Create custom correlation rules between firewall logs and endpoint events
 
 ---
 
 ## Conclusion
 
-The lab successfully demonstrated how Wazuh can be deployed and used for endpoint monitoring, authentication event analysis, and firewall log collection in a segmented Hyper-V environment.
+The lab successfully demonstrated how Wazuh can be deployed and used for endpoint monitoring, authentication event analysis, process execution monitoring, File Integrity Monitoring, and firewall log collection in a segmented Hyper-V environment.
 
-The strongest results were Windows authentication monitoring and failed login detection from the HR client. OPNsense syslog forwarding was also successfully validated after troubleshooting with tcpdump and archives.log.
+The strongest initial results were Windows authentication monitoring and failed login detection from the HR client. OPNsense syslog forwarding was also successfully validated after troubleshooting with tcpdump and archives.log.
 
-The DDoS simulation did not trigger a default Wazuh DDoS alert, but this became an important learning point. It showed that reliable SIEM detection often requires the right log sources, correct parsing, and custom rules.
+The extended validation strengthened the lab by proving that Wazuh could also detect command execution through Sysmon and file modification through File Integrity Monitoring. Commands such as `whoami` and `ipconfig` were detected as Sysmon process creation events, and changes to `C:\WazuhLab\test.txt` were detected as an integrity checksum change.
 
-Overall, this lab provided practical experience with Wazuh, OPNsense, syslog, endpoint monitoring, troubleshooting, and SOC-style analysis.
+The DDoS simulation did not trigger a default Wazuh DDoS alert, but this became an important learning point. It showed that reliable SIEM detection often requires the right log sources, correct parsing, custom rules, and proper tuning.
+
+Overall, this lab provided practical experience with Wazuh, OPNsense, syslog, endpoint monitoring, Sysmon, File Integrity Monitoring, troubleshooting, and SOC-style analysis.
